@@ -1,0 +1,249 @@
+{
+  "id": "b7d49133-7c16-48ba-acca-eea3914cbd4e",
+  "revision": 0,
+  "last_node_id": 4,
+  "last_link_id": 4,
+  "nodes": [
+    {
+      "id": 2,
+      "type": "LoadImage",
+      "pos": [
+        -1400,
+        5750
+      ],
+      "size": [
+        340,
+        500
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "图像",
+          "name": "image",
+          "type": "COMBO",
+          "widget": {
+            "name": "image"
+          },
+          "link": null
+        },
+        {
+          "label": "上传",
+          "name": "upload",
+          "type": "IMAGEUPLOAD",
+          "widget": {
+            "name": "upload"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "图像",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            3
+          ]
+        },
+        {
+          "label": "遮罩",
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.42.1",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {}
+        },
+        "Node name for S&R": "LoadImage",
+        "guhaiImageValue": "01edfc5c9df3e4f601cef8e002ea1eff1e7e007217c986246fcb9fe584256e52.png"
+      },
+      "widgets_values": [
+        "01edfc5c9df3e4f601cef8e002ea1eff1e7e007217c986246fcb9fe584256e52.png",
+        "image"
+      ],
+      "widgets_values_named": {
+        "image": "01edfc5c9df3e4f601cef8e002ea1eff1e7e007217c986246fcb9fe584256e52.png",
+        "upload": "image"
+      }
+    },
+    {
+      "id": 3,
+      "type": "PreviewAny",
+      "pos": [
+        -294.1882679208265,
+        5751.639443347556
+      ],
+      "size": [
+        330,
+        530
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.42.1",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {}
+        },
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "widgets_values_named": {}
+    },
+    {
+      "id": 4,
+      "type": "QwenPromptEnhancerLocal",
+      "pos": [
+        -910,
+        5750
+      ],
+      "size": [
+        420,
+        530
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "reference_images.reference_image_0",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 3
+        },
+        {
+          "name": "reference_images.reference_image_1",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "reference_videos.reference_video_0",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "result",
+          "type": "STRING",
+          "links": [
+            4
+          ]
+        },
+        {
+          "name": "selected_skill",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "qwen-h3-prompt",
+        "ver": "1564f02616d7f1b809a58fa472f30f289246e2bf",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {}
+        },
+        "Node name for S&R": "QwenPromptEnhancerLocal"
+      },
+      "widgets_values": [
+        "使用参考图，制作10秒高冲击真实人物PV卡点混剪，需要PV剧情连贯，\n画面风格：\n精细的画面、高质量的音效和震撼的剪辑，3A大作级动态图形片头 × 街头潮牌宣传片，所有图形元素跟随节拍快速运动、顿挫卡点\n只输出提示词，不要废话。",
+        "h3-prompt-writing",
+        "",
+        "Qwen3.8\\Huihui-Qwen3.8-27B-abliterated-UD-IQ3_S.gguf",
+        "Qwen3.8\\Qwen3.8-27B-mmproj-BF16.gguf",
+        false,
+        "medium",
+        522860089269165,
+        "randomize",
+        8192,
+        32768,
+        2,
+        6,
+        6,
+        6
+      ],
+      "widgets_values_named": {
+        "prompt": "使用参考图，制作10秒高冲击真实人物PV卡点混剪，需要PV剧情连贯，\n画面风格：\n精细的画面、高质量的音效和震撼的剪辑，3A大作级动态图形片头 × 街头潮牌宣传片，所有图形元素跟随节拍快速运动、顿挫卡点\n只输出提示词，不要废话。",
+        "skill": "h3-prompt-writing",
+        "skill_root": "",
+        "llm_model": "Qwen3.8\\Huihui-Qwen3.8-27B-abliterated-UD-IQ3_S.gguf",
+        "vision_model": "Qwen3.8\\Qwen3.8-27B-mmproj-BF16.gguf",
+        "think_mode": false,
+        "reasoning_effort": "medium",
+        "seed": 522860089269165,
+        "control_after_generate": "randomize",
+        "max_tokens": 8192,
+        "context_size": 32768,
+        "video_sample_frames_per_sec": 2,
+        "duration": 6,
+        "force_unload_model": 6,
+        "max_agent_steps": 6
+      }
+    }
+  ],
+  "links": [
+    [
+      3,
+      2,
+      0,
+      4,
+      0,
+      "IMAGE"
+    ],
+    [
+      4,
+      4,
+      0,
+      3,
+      0,
+      "STRING"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ue_links": [],
+    "ds": {
+      "scale": 1.0744865899986762,
+      "offset": [
+        1759.2404358144051,
+        -5444.7534673202545
+      ]
+    },
+    "links_added_by_ue": [],
+    "frontendVersion": "1.55.18",
+    "VHS_latentpreview": false,
+    "VHS_latentpreviewrate": 0,
+    "VHS_MetadataImage": true,
+    "VHS_KeepIntermediate": true
+  },
+  "version": 0.4,
+  "seed_widgets": {
+    "4": 7
+  }
+}

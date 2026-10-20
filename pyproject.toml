@@ -1,0 +1,14 @@
+[project]
+name = "Qwen-PromptEnhancer"
+version = "0.1.0"
+description = "Execute local Skills as multi-step agent workflows locally with Qwen models in ComfyUI."
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/brightests/Qwen-PromptEnhancer"
+
+[tool.comfy]
+PublisherId = "brightests"
+DisplayName = "Qwen Prompt Enhancer · 本地提示词"

@@ -1,0 +1,97 @@
+{
+  "QwenPromptEnhancerLocal": {
+    "display_name": "Qwen Prompt Enhancer · 本地提示词",
+    "description": "在本地 llama.cpp 服务上运行所选 GGUF 模型（默认 Qwen3.8），并借助本地 function calling 工具，让模型以多步 agent 方式执行任意已发现的 Skill。（by Bright）",
+    "inputs": {
+      "prompt": {
+        "name": "提示词",
+        "tooltip": "要执行的任务描述。可在此说明各参考图、参考视频的角色与用途。"
+      },
+      "skill": {
+        "name": "技能",
+        "tooltip": "内置 skills/ 与 custom_skills/ 目录中的 Skill。选 'auto' 时由本地模型自行挑选，范围包括 skill_root 下发现的 Skill；选 'none' 时不加载 Skill，直接按提示词回答。",
+        "options": {
+          "none": "无",
+          "auto": "自动"
+        }
+      },
+      "skill_root": {
+        "name": "附加技能目录",
+        "tooltip": "可选：额外扫描的 Skill 根目录，例如其他节点的 skills/ 目录。其中的 Skill 会加入 'auto' 自动选择的候选池；若想让某个 Skill 出现在 skill 下拉框中，请把它放进 custom_skills/。"
+      },
+      "llm_model": {
+        "name": "语言模型",
+        "tooltip": "models/LLM 及所有已注册 LLM 目录（含 extra_model_paths.yaml）中的 GGUF 语言模型。任何支持工具调用的模型都能替换 Qwen3.8。"
+      },
+      "vision_model": {
+        "name": "视觉投影模型",
+        "tooltip": "GGUF 多模态投影器（mmproj），与语言模型放在同一目录。选 none 时按纯文本模型运行：启动参数不再传 --mmproj，也不能使用参考图片/参考视频。"
+      },
+      "think_mode": {
+        "name": "思考模式",
+        "tooltip": "关闭时使用 instruct 采样参数；开启后启用思考模式并使用思考采样参数，两套都取自 Qwen 官方推荐值。只在所选模型的 chat template 含 enable_thinking 时生效，否则自动按 instruct 参数运行。"
+      },
+      "reasoning_effort": {
+        "name": "思考等级",
+        "tooltip": "仅在思考模式下生效，且只在模型模板支持 reasoning_effort 时才随请求下发。medium 为 RTX 3090 上的均衡预设。",
+        "options": {
+          "low": "低",
+          "medium": "中",
+          "xhigh": "极高"
+        }
+      },
+      "seed": {
+        "name": "随机种",
+        "tooltip": "ComfyUI 随机种子，会确定性地映射到 llama.cpp 的 32 位种子范围。"
+      },
+      "max_tokens": {
+        "name": "最大输出令牌数",
+        "tooltip": "每个 agent 步的最大生成 token 数（开启思考模式时包含思考内容）。每步输出会随对话历史重新占用上下文窗口，调大时注意 context_size 是否足够。"
+      },
+      "context_size": {
+        "name": "上下文长度",
+        "tooltip": "llama.cpp 上下文窗口（--ctx-size），提示词、多步对话历史与输出共享，默认 32768。调大会增加 KV cache 显存占用；上下文不足时 llama.cpp 会从开头截断最早的内容而不报错。"
+      },
+      "video_sample_frames_per_sec": {
+        "name": "视频每秒采样帧数",
+        "tooltip": "每个参考视频每秒采样的帧数。同一秒内的帧会合并为一张按时间排序的拼图（contact sheet）一并发送。"
+      },
+      "duration": {
+        "name": "提示词时长（秒）",
+        "tooltip": "目标成片时长。0 表示不注入（图片类输出无需时长）；大于 0 时会在用户请求中追加目标时长，供视频/声音类 Skill 安排动作与声音节奏。参考视频 15 秒的时长上限与此参数无关。"
+      },
+      "force_unload_model": {
+        "name": "强制卸载模型",
+        "tooltip": "开启时每次运行结束后都会停止节点的 llama.cpp 服务并释放其显存与内存。运行出错时始终强制卸载。"
+      },
+      "max_agent_steps": {
+        "name": "最大智能体步数",
+        "tooltip": "agent 循环中工具调用轮数的上限。"
+      },
+      "reference_images": {
+        "name": "参考图像",
+        "tooltip": "可选参考图（最多 9 张）。需要时请在提示词中说明每张图的角色与用途。"
+      },
+      "reference_image": {
+        "name": "参考图像",
+        "tooltip": "一张参考图。需要时请在 prompt 中说明它的角色与用途。"
+      },
+      "reference_videos": {
+        "name": "参考视频",
+        "tooltip": "可选参考视频（最多 3 段，总时长不超过 15 秒）。以 IMAGE 批次提供按顺序排列的视频帧，兼容 VHS Load Video。"
+      },
+      "reference_video": {
+        "name": "参考视频",
+        "tooltip": "以 IMAGE 批次提供的、按顺序排列的视频帧，兼容 VHS Load Video。"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "结果"
+      },
+      "1": {
+        "name": "使用的技能"
+      }
+    }
+  }
+}
