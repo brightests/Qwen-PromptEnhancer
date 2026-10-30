@@ -32,8 +32,8 @@ from .skills import (
 
 MODEL_DIR = Path(folder_paths.models_dir) / "LLM"
 LLM_FOLDER = "LLM"
-DEFAULT_MODEL = "Qwen3.8/Qwen3.8-27B-Q4_K_M.gguf"
-DEFAULT_MMPROJ = "Qwen3.8/mmproj-F16.gguf"
+DEFAULT_MODEL = "Qwen3.8/Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf"
+DEFAULT_MMPROJ = "Qwen3.8/Qwen3.8-27B-mmproj-BF16.gguf"
 # Sentinel dropdown value: run the GGUF as a text-only model without a projector.
 NO_MMPROJ = "none"
 # Sentinel dropdown value: answer the prompt directly without loading any Skill.
@@ -48,6 +48,8 @@ REFERENCE_VIDEO_FPS = 24.0
 INFERENCE_LOCK = threading.Lock()
 SERVER_MANAGER = LlamaServerManager()
 LOGGER = logging.getLogger("ComfyUI.QwenPromptEnhancer")
+# Routing budget for the short Skill-selection call; aligned with upstream 0.1.7.
+ROUTING_MAX_TOKENS = 64
 
 # Added rather than overwritten so the roots of other llama.cpp packs stay usable,
 # and so folders declared in extra_model_paths.yaml show up in the dropdowns.
@@ -308,6 +310,13 @@ class QwenPromptEnhancer(io.ComfyNode):
                     tooltip="仅在思考模式下生效，且只在模型模板支持 reasoning_effort 时才随请求下发。"
                     "medium 为 RTX 3090 上的均衡预设。",
                 ),
+                io.Boolean.Input(
+                    "output_json",
+                    display_name="json output",
+                    default=False,
+                    tooltip="开启后模型会额外给出与结果等价的结构化 JSON，从『结果 JSON』输出端口返回；"
+                    "关闭时该端口输出空字符串。适合下游需要按字段解析提示词的节点。",
+                ),
                 io.Int.Input(
                     "seed",
                     default=0,
@@ -402,7 +411,7 @@ class QwenPromptEnhancer(io.ComfyNode):
             ],
             outputs=[
                 io.String.Output("result"),
-                io.String.Output("selected_skill"),
+                io.String.Output("result_json"),
             ],
         )
 
@@ -421,6 +430,7 @@ class QwenPromptEnhancer(io.ComfyNode):
         context_size,
         video_sample_frames_per_sec,
         duration,
+        output_json,
         force_unload_model,
         max_agent_steps,
         reference_images=None,
@@ -549,7 +559,7 @@ class QwenPromptEnhancer(io.ComfyNode):
                     selection, routing_usage = server.chat(
                         router_prompt(prompt, asset_summary, registry),
                         seed=seed,
-                        max_tokens=48,
+                        max_tokens=ROUTING_MAX_TOKENS,
                         temperature=0.0,
                         top_p=1.0,
                         top_k=1,
@@ -599,6 +609,31 @@ class QwenPromptEnhancer(io.ComfyNode):
                         _usage_summary(agent_usage),
                         time.perf_counter() - stage_started,
                     )
+                    # No tools exist in this mode either, so JSON output is produced by
+                    # one extra conversion turn inside the same conversation.
+                    result_json = ""
+                    if output_json:
+                        messages.append({"role": "assistant", "content": result})
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": "Convert your previous answer into ONE JSON object that preserves all of "
+                                "its information (meaningful field names; arrays or nested objects where "
+                                "appropriate). Reply with only the JSON object, no markdown fences and no commentary.",
+                            }
+                        )
+                        result_json, json_usage = server.chat(
+                            messages,
+                            seed=seed,
+                            max_tokens=max_tokens,
+                            **settings,
+                            think_mode=effective_think,
+                            reasoning_effort=reasoning_effort,
+                        )
+                        LOGGER.info(
+                            "[Qwen PromptEnhancer] JSON conversion complete | %s",
+                            _usage_summary(json_usage),
+                        )
                 else:
                     skill_path = _skill_path(selected, registry)
                     messages = [
@@ -615,7 +650,7 @@ class QwenPromptEnhancer(io.ComfyNode):
                         max_agent_steps,
                         max_tokens,
                     )
-                    result, agent_steps, agent_usage = run_agent_loop(
+                    result, result_json, agent_steps, agent_usage = run_agent_loop(
                         server,
                         messages,
                         skill_root=skill_path,
@@ -627,6 +662,7 @@ class QwenPromptEnhancer(io.ComfyNode):
                         think_mode=effective_think,
                         reasoning_effort=reasoning_effort,
                         max_steps=max_agent_steps,
+                        json_output=bool(output_json),
                     )
                     LOGGER.info(
                         "[Qwen PromptEnhancer] Agent loop complete | skill=%s | steps=%d | %s | elapsed %.2f s",
@@ -634,6 +670,12 @@ class QwenPromptEnhancer(io.ComfyNode):
                         agent_steps,
                         _usage_summary(agent_usage),
                         time.perf_counter() - stage_started,
+                    )
+
+                if output_json and not result_json.strip():
+                    LOGGER.warning(
+                        "[Qwen PromptEnhancer] JSON output was requested but the model did not "
+                        "provide a JSON payload; the 'result_json' output stays empty"
                     )
 
                 content = None
@@ -655,7 +697,7 @@ class QwenPromptEnhancer(io.ComfyNode):
                 f"[Qwen PromptEnhancer] Execution completed successfully | skill={selected} | steps={agent_steps} | "
                 f"total elapsed {time.perf_counter() - total_started:.2f} s"
             )
-            return io.NodeOutput(result, selected)
+            return io.NodeOutput(result, result_json)
         except Exception as error:
             content = None
             messages = None

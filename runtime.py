@@ -30,6 +30,16 @@ def normalize_llama_seed(seed: int) -> int:
     return int(seed) % LLAMA_SEED_MODULUS
 
 
+def _reasoning_tokens(usage: object) -> object:
+    """Return the reasoning-token count reported by llama.cpp, when it reports one."""
+    if not isinstance(usage, dict):
+        return None
+    details = usage.get("completion_tokens_details")
+    if isinstance(details, dict):
+        return details.get("reasoning_tokens")
+    return usage.get("reasoning_tokens")
+
+
 @dataclass(frozen=True)
 class RuntimeSpec:
     executable: Path
@@ -355,8 +365,13 @@ class LlamaServer:
             "enable_thinking": bool(think_mode),
             "preserve_thinking": False,
         }
-        if think_mode and "reasoning_effort" in template:
-            payload["reasoning_effort"] = reasoning_effort
+        if "reasoning_effort" in template:
+            # Always pin reasoning_effort explicitly. The model's own chat template
+            # accepts it whether thinking is on or off, so sending "none" in
+            # non-think mode keeps routing/direct answer deterministic. A model
+            # whose server rejects the field falls back to a 400 retry that drops
+            # it (see chat()).
+            payload["reasoning_effort"] = reasoning_effort if think_mode else "none"
 
     def _request(self, method: str, path: str, payload=None, timeout: float = 900.0):
         data = None if payload is None else json.dumps(payload).encode("utf-8")
@@ -404,13 +419,57 @@ class LlamaServer:
             "repeat_penalty": repetition_penalty,
         }
         self._apply_template_options(payload, think_mode, reasoning_effort)
-        response = self._request("POST", "/v1/chat/completions", payload)
-        content = response["choices"][0]["message"].get("content") or ""
-        if not content.strip():
-            raise RuntimeError(
-                "The local model returned no final answer. Disable think mode or increase max_tokens so thinking does not consume the output budget."
+        response = self._request_completions(payload)
+        choice = (response.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        content = (message.get("content") or "").strip()
+        usage = response.get("usage", {})
+        if content:
+            return content, usage
+        # A thinking model may drain the output budget on reasoning and emit no
+        # final answer, or return only the chain-of-thought. Surface the reasoning
+        # text instead of failing hard so the downstream still gets usable output.
+        reasoning = (message.get("reasoning_content") or "").strip()
+        details = ", ".join(
+            [
+                f"finish_reason={choice.get('finish_reason') or 'unknown'}",
+                f"completion_tokens={usage.get('completion_tokens') if isinstance(usage, dict) else None}",
+                f"reasoning_tokens={_reasoning_tokens(usage)}",
+                f"max_tokens={max_tokens}",
+            ]
+        )
+        if reasoning:
+            LOGGER.warning(
+                "[Qwen PromptEnhancer] Empty final answer; falling back to reasoning text | "
+                "think_mode=%s | %s",
+                think_mode,
+                details,
             )
-        return content.strip(), response.get("usage", {})
+            return reasoning, usage
+        raise RuntimeError(
+            "The local model returned no final answer. Disable think mode or increase max_tokens "
+            f"so thinking does not consume the output budget. ({details})"
+        )
+
+    @staticmethod
+    def _is_unsupported_reasoning_effort(error: RuntimeError) -> bool:
+        """Detect a llama.cpp 400 that rejects the reasoning_effort field."""
+        return "400" in str(error)
+
+    def _request_completions(
+        self, payload: dict[str, object], timeout: float = 900.0
+    ) -> dict[str, object]:
+        try:
+            return self._request("POST", "/v1/chat/completions", payload, timeout)
+        except RuntimeError as error:
+            if "reasoning_effort" in payload and self._is_unsupported_reasoning_effort(error):
+                LOGGER.warning(
+                    "[Qwen PromptEnhancer] llama.cpp rejected reasoning_effort=%s; retrying without it",
+                    payload["reasoning_effort"],
+                )
+                payload.pop("reasoning_effort", None)
+                return self._request("POST", "/v1/chat/completions", payload, timeout)
+            raise
 
     def chat_turn(
         self,

@@ -55,7 +55,7 @@ GGUF 模型放在 ComfyUI 的 `LLM` 模型目录里，默认是 ```ComfyUI/model
 
 默认使用 Qwen3.8，权重与投影器如下：
 
-* 视觉权重：从 https://huggingface.co/unsloth/Qwen3.8-27B-GGUF 下载 ```mmproj-F16.gguf```，放进 ```models/LLM/Qwen3.8/```
+* 视觉权重：从 https://huggingface.co/unsloth/Qwen3.8-27B-GGUF 下载 ```mmproj-F16.gguf```，放进 ```models/LLM/Qwen3.8/``` 并重命名为 ```Qwen3.8-27B-mmproj-BF16.gguf```（与节点默认值一致）
 * GGUF权重：   
   对于20G以上显存的设备，推荐从 https://huggingface.co/unsloth/Qwen3.8-27B-GGUF 下载 ```Qwen3.8-27B-Q4_K_M.gguf```。    
   对于16G显存的设备，推荐 https://huggingface.co/soyaakinohara/qwen3.8-27b-abliterated-3.69bpw-12GB-MTP.gguf 。
@@ -159,12 +159,13 @@ python install_runtime.py --backend cuda --build-from-source
 节点选项说明：
 
 - `prompt`：用户请求，描述要完成的任务。
-- `skill`：下拉框，列出内置 `skills/` 与 `custom_skills/` 中发现的 Skill，另有 `auto` 选项。设为 `auto` 时节点先在全部已发现的 Skill 中自动选择一个。选 `none` 时不加载任何 Skill，跳过工具调用循环直接回答，此时模型不需要支持 function calling 也能使用，`selected_skill` 输出为 `none`。
+- `skill`：下拉框，列出内置 `skills/` 与 `custom_skills/` 中发现的 Skill，另有 `auto` 选项。设为 `auto` 时节点先在全部已发现的 Skill 中自动选择一个。选 `none` 时不加载任何 Skill，跳过工具调用循环直接回答，此时模型不需要支持 function calling 也能使用。
 - `skill_root`：高级选项，默认空。额外 Skill 根目录，其中的 Skill 会被扫描并加入 `auto` 自动选择候选；要让某个 Skill 出现在下拉框中，请把它放进 `custom_skills/`。
-- `llm_model`：语言模型，下拉框列出所有已注册 `LLM` 目录中的 GGUF（不含 `mmproj`）。默认 `Qwen3.8/Qwen3.8-27B-Q4_K_M.gguf`，可换成任意支持工具调用的 GGUF 模型。
-- `vision_model`：视觉投影模型（mmproj），可选。默认 `Qwen3.8/mmproj-F16.gguf`；选 `none` 时不传 `--mmproj`，按纯文本模型运行，此时不能使用参考图片/参考视频。
+- `llm_model`：语言模型，下拉框列出所有已注册 `LLM` 目录中的 GGUF（不含 `mmproj`）。默认 `Qwen3.8/Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf`，可换成任意支持工具调用的 GGUF 模型。
+- `vision_model`：视觉投影模型（mmproj），可选。默认 `Qwen3.8/Qwen3.8-27B-mmproj-BF16.gguf`；选 `none` 时不传 `--mmproj`，按纯文本模型运行，此时不能使用参考图片/参考视频。
 - `think_mode`：布尔开关，默认关闭；在 instruct 与 thinking 两套 Qwen 官方推荐采样参数之间切换。所选模型的 chat template 不含 `enable_thinking` 时自动按 instruct 参数运行，并在日志中给出提示。
 - `reasoning_effort`：仅在 `think_mode` 开启、且模型模板支持 `reasoning_effort` 时随请求下发，默认 `medium`。
+- `output_json`：布尔开关，默认关闭。开启后模型会额外给出与结果等价的结构化 JSON：Skill 模式在 `finish` 调用中一并返回（不产生额外推理调用），`none` 模式在同一对话里追加一轮转换。JSON 从 `result_json` 输出端口返回，关闭时该端口为空字符串；适合下游需要按字段解析提示词的节点。
 - `seed`：种子。
 - `max_tokens`：每个 agent 步骤的最大生成 token 数，范围 256-16384；开启思考模式时思考内容也计入。每步输出会随对话历史重新占用上下文，调大时注意 `context_size` 是否足够。
 - `context_size`：高级选项。llama.cpp 上下文窗口（`--ctx-size`），默认 32768，提示词、多步对话历史与输出共享这个窗口。调大会增加 KV cache 显存占用；上下文不足时 llama.cpp 会从开头截断最早的内容而不报错。
@@ -178,14 +179,14 @@ python install_runtime.py --backend cuda --build-from-source
 输出：
 
 - `result`：Skill 产出的最终文本。
-- `selected_skill`：本次实际使用的 Skill id。
+- `result_json`：结果的 JSON 结构化版本；未开启 `output_json` 时为空字符串。本次实际使用的 Skill id 会打印在控制台日志中（`skill=...`）。
 
 ### Agent 工具
 
 本地模型在运行中可以使用以下离线工具：
 
 - `list_skill_files` / `read_skill_reference`：列出并读取所选 Skill 目录内的文档（`SKILL.md` 及其 `references/`）。
-- `finish`：返回最终结果并结束运行。
+- `finish`：返回最终结果并结束运行；开启 `output_json` 时会附带一个与结果等价的 JSON 对象参数。
 
 结果只通过节点的 `result` 字符串输出返回，节点不会写入任何文件；把 `result` 接到字符串/文本节点即可使用。读取仅限所选 Skill 目录内。达到 `max_agent_steps` 仍未结束时节点会报错退出。
 
@@ -209,6 +210,40 @@ python install_runtime.py --backend cuda --build-from-source
 ## 显存和生命周期
 
 若关闭 `force unload model`，内置服务会继续占用显存与内存（默认 Qwen3.8-27B Q4 约 20 GB，换成其他模型时随所选模型变化），模型配置不变时下一次可直接复用；再次开启并运行节点、模型配置发生变化或退出 ComfyUI 时会终止驻留服务。
+
+## 架构概览
+
+本节点基于 ComfyUI 下一代节点 API（ComfyExtension / `comfy_api.latest`）实现，并以**本地多步 agent loop** 执行 Skill。这是与上游 `chflame163/ComfyUI_Qwen_H3_Prompt` 最本质的区别：上游是经典 `NODE_CLASS_MAPPINGS` + 单趟提示词注入，本节点是 ComfyExtension + 真·工具调用循环。
+
+### 组件
+
+- **`node.py`**：定义 `QwenPromptEnhancer(io.ComfyNode)`，通过 `define_schema()` 返回强类型 `io.Schema`（`io.String` / `Combo` / `Boolean` / `Int` / `Float` / `Autogrow.Input`），对外暴露 `prompt` / `skill` / `skill_root` 等输入与 `result` / `result_json` 两个输出。
+- **`runtime.py`**：`LlamaServer` / `LlamaServerManager` 管理本地 `llama-server` 子进程；启动后通过 `/props` 探测模型 chat template 能力，按能力下发 `enable_thinking` / `reasoning_effort`；提供 `chat()`（直答）与 `chat_turn()`（带 function calling）。
+- **`skills.py`**：Skill 注册表。扫描 `skills/`、`custom_skills/` 与 `skill_root`，解析 `SKILL.md` front matter 与 `meta.yaml`，生成 `SkillSpec`；`router_prompt()` 生成路由提示，`parse_skill_selection()` 做鲁棒 id 匹配。Skill id = 目录名。
+- **`agent.py`**：`run_agent_loop()` 驱动模型进行有界的工具调用循环，工具为节点内置的受限本地工具（`list_skill_files` / `read_skill_reference` / `finish`），直至 `finish` 或达到 `max_agent_steps`（默认 6）。
+- **`media.py`**：把参考图 / 参考视频编码为多模态内容（拼图 contact sheet 等）。
+
+### 执行流程
+
+```mermaid
+flowchart TD
+  A[ComfyExtension 节点] --> B[execute / INFERENCE_LOCK]
+  B --> C[acquire LlamaServer 子进程]
+  C --> D{skill = auto?}
+  D -->|auto| E[router_prompt · 64 tok 选 Skill]
+  D -->|指定 / none| F[直接解析 Skill]
+  E --> G[agent loop: 工具调用 list / read / finish]
+  F --> G
+  G --> H[输出 result + result_json]
+```
+
+### 与上游的关键差异
+
+- **注册方式**：本节点用 ComfyExtension（面向 ComfyUI 现代前端 / ComfyStudio）；上游用经典 `NODE_CLASS_MAPPINGS`，并拆成 H3 与 General 两个节点。
+- **Skill 执行**：本节点为**多步 agent 循环**（模型按需读取 Skill 参考文档并 `finish`）；上游为**单趟提示词注入**（`SKILL.md` 作为 system 指导一次填充，无工具循环）。
+- **输出**：本节点双输出 `result` + `result_json`；上游为单文本 completion。
+- **路由**：本节点单阶段（1 次 64-tok）；上游 H3 节点两阶段（mode + skill）。
+- 两者共享 `install_runtime.py` / `runtime.py` 的 llama.cpp 运行时方案；本节点已对齐上游 b11115 / 0.1.7 的 `chat()` 修复。
 
 ## 上游与致谢
 

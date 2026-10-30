@@ -10,3 +10,5 @@ bin/
 runtime/
 runtime_config.json
 skills/H3-comic-pv/
+# 用户本地自定义的 Skill 不纳入版本库，仅保留官方 bundled Skill（skills/）
+custom_skills/
