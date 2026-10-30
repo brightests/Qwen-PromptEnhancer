@@ -1,8 +1,8 @@
 {
   "id": "b7d49133-7c16-48ba-acca-eea3914cbd4e",
   "revision": 0,
-  "last_node_id": 4,
-  "last_link_id": 4,
+  "last_node_id": 5,
+  "last_link_id": 5,
   "nodes": [
     {
       "id": 2,
@@ -156,9 +156,11 @@
           ]
         },
         {
-          "name": "selected_skill",
+          "name": "result_json",
           "type": "STRING",
-          "links": null
+          "links": [
+            5
+          ]
         }
       ],
       "properties": {
@@ -178,13 +180,14 @@
         "Qwen3.8\\Qwen3.8-27B-mmproj-BF16.gguf",
         false,
         "medium",
+        false,
         522860089269165,
         "randomize",
         8192,
         32768,
         2,
-        6,
-        6,
+        0.0,
+        true,
         6
       ],
       "widgets_values_named": {
@@ -204,6 +207,47 @@
         "force_unload_model": 6,
         "max_agent_steps": 6
       }
+    },
+    {
+      "id": 5,
+      "type": "PreviewAny",
+      "pos": [
+        85.81173207917351,
+        5971.639443347556
+      ],
+      "size": [
+        330,
+        530
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 5
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.42.1",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {}
+        },
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "widgets_values_named": {},
+      "title": "结果 JSON (result_json)"
     }
   ],
   "links": [
@@ -220,6 +264,14 @@
       4,
       0,
       3,
+      0,
+      "STRING"
+    ],
+    [
+      5,
+      5,
+      1,
+      5,
       0,
       "STRING"
     ]
