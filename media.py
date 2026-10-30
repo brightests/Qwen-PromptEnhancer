@@ -52,6 +52,7 @@ def tensor_frame_grid_data_url(
     rows = math.ceil(len(frame_indices) / columns)
     cell_size = max(1, max_edge // max(columns, rows))
     canvas = Image.new("RGB", (columns * cell_size, rows * cell_size), (16, 16, 16))
+    pasted_rects: list[tuple[int, int, int, int]] = []
     for position, frame_index in enumerate(frame_indices):
         frame = image[frame_index, ..., :3].detach().cpu().numpy()
         pixels = np.clip(frame * 255.0, 0, 255).astype(np.uint8)
@@ -62,6 +63,16 @@ def tensor_frame_grid_data_url(
         x = column * cell_size + (cell_size - pil_image.width) // 2
         y = row * cell_size + (cell_size - pil_image.height) // 2
         canvas.paste(pil_image, (x, y))
+        pasted_rects.append((x, y, x + pil_image.width, y + pil_image.height))
+    # Crop away unused canvas so sparse sheets (e.g. a single frame in a
+    # 1x1 grid) do not waste vision tokens on black padding. Full grids
+    # keep their original dimensions because they cover the whole canvas.
+    left = min(rect[0] for rect in pasted_rects)
+    top = min(rect[1] for rect in pasted_rects)
+    right = max(rect[2] for rect in pasted_rects)
+    bottom = max(rect[3] for rect in pasted_rects)
+    if (left, top, right, bottom) != (0, 0, canvas.width, canvas.height):
+        canvas = canvas.crop((left, top, right, bottom))
     buffer = io.BytesIO()
     canvas.save(buffer, format="JPEG", quality=88, optimize=True)
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
