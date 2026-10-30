@@ -324,8 +324,8 @@ def router_prompt(
     available = discover_skill_registry() if skills is None else skills
     catalog = "\n".join(f"- {spec.id}: {spec.description}" for spec in available)
     system = (
-        "Select exactly one available Skill for the request. Return only its exact Skill id, "
-        "with no punctuation or explanation.\n\n" + catalog
+        "Select exactly one available Skill for the request. Reply with one JSON object "
+        '{"skill": "<exact skill id>"} and nothing else.\n\n' + catalog
     )
     detail = f"Connected assets: {asset_summary}\n" if asset_summary and asset_summary != "none" else ""
     user = f"{detail}Request:\n{user_prompt}"

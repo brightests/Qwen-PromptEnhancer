@@ -405,6 +405,7 @@ class LlamaServer:
         repetition_penalty: float,
         think_mode: bool,
         reasoning_effort: str,
+        schema: dict[str, object] | None = None,
     ) -> tuple[str, dict[str, int]]:
         payload = {
             "model": self.alias,
@@ -418,6 +419,10 @@ class LlamaServer:
             "presence_penalty": presence_penalty,
             "repeat_penalty": repetition_penalty,
         }
+        if schema is not None:
+            # llama.cpp compiles the JSON schema into a GBNF grammar, so the decoder
+            # can only emit values that satisfy it -- malformed JSON becomes impossible.
+            payload["response_format"] = {"type": "json_object", "schema": schema}
         self._apply_template_options(payload, think_mode, reasoning_effort)
         response = self._request_completions(payload)
         choice = (response.get("choices") or [{}])[0]
@@ -452,24 +457,36 @@ class LlamaServer:
         )
 
     @staticmethod
-    def _is_unsupported_reasoning_effort(error: RuntimeError) -> bool:
-        """Detect a llama.cpp 400 that rejects the reasoning_effort field."""
+    def _is_bad_request(error: RuntimeError) -> bool:
+        """Detect a llama.cpp HTTP 400 that rejects an optional request field."""
         return "400" in str(error)
 
     def _request_completions(
         self, payload: dict[str, object], timeout: float = 900.0
     ) -> dict[str, object]:
-        try:
-            return self._request("POST", "/v1/chat/completions", payload, timeout)
-        except RuntimeError as error:
-            if "reasoning_effort" in payload and self._is_unsupported_reasoning_effort(error):
-                LOGGER.warning(
-                    "[Qwen PromptEnhancer] llama.cpp rejected reasoning_effort=%s; retrying without it",
-                    payload["reasoning_effort"],
-                )
-                payload.pop("reasoning_effort", None)
+        """POST /v1/chat/completions, dropping optional fields a 400 rejects.
+
+        Older llama.cpp builds may not know ``reasoning_effort`` or the JSON-schema
+        ``response_format``. Each is tried once, then dropped from the retry so the
+        call degrades to free-form generation instead of failing outright.
+        """
+        droppable = [
+            field
+            for field in ("reasoning_effort", "response_format")
+            if field in payload
+        ]
+        while True:
+            try:
                 return self._request("POST", "/v1/chat/completions", payload, timeout)
-            raise
+            except RuntimeError as error:
+                if not droppable or not self._is_bad_request(error):
+                    raise
+                field = droppable.pop(0)
+                LOGGER.warning(
+                    "[Qwen PromptEnhancer] llama.cpp rejected %s; retrying without it",
+                    field,
+                )
+                payload.pop(field, None)
 
     def chat_turn(
         self,

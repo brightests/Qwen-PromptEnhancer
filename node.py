@@ -343,7 +343,8 @@ class QwenPromptEnhancer(io.ComfyNode):
                     step=256,
                     advanced=True,
                     tooltip="llama.cpp 上下文窗口（--ctx-size），提示词、多步对话历史与输出共享，默认 32768。"
-                    "调大会增加 KV cache 显存占用；上下文不足时 llama.cpp 会从开头截断最早的内容而不报错。",
+                    "调大会增加 KV cache 显存占用；上下文不足时请求会被 llama.cpp 拒绝"
+                    "（HTTP 400，报错显示在 ComfyUI 控制台），需调大本参数或减少参考图片与视频时长。",
                 ),
                 io.Int.Input(
                     "video_sample_frames_per_sec",
@@ -556,6 +557,19 @@ class QwenPromptEnhancer(io.ComfyNode):
                         "[Qwen PromptEnhancer] Starting automatic Skill routing | candidates=%d",
                         len(registry),
                     )
+                    # The enum pins the decoder to the exact candidate ids, so the
+                    # routing call can no longer produce an unparseable selection.
+                    routing_schema = {
+                        "type": "object",
+                        "properties": {
+                            "skill": {
+                                "type": "string",
+                                "enum": [spec.id for spec in registry],
+                            }
+                        },
+                        "required": ["skill"],
+                        "additionalProperties": False,
+                    }
                     selection, routing_usage = server.chat(
                         router_prompt(prompt, asset_summary, registry),
                         seed=seed,
@@ -568,6 +582,7 @@ class QwenPromptEnhancer(io.ComfyNode):
                         repetition_penalty=1.0,
                         think_mode=False,
                         reasoning_effort="low",
+                        schema=routing_schema,
                     )
                     selected = parse_skill_selection(selection, registry)
                     LOGGER.info(
@@ -622,14 +637,54 @@ class QwenPromptEnhancer(io.ComfyNode):
                                 "appropriate). Reply with only the JSON object, no markdown fences and no commentary.",
                             }
                         )
-                        result_json, json_usage = server.chat(
-                            messages,
-                            seed=seed,
-                            max_tokens=max_tokens,
-                            **settings,
-                            think_mode=effective_think,
-                            reasoning_effort=reasoning_effort,
-                        )
+                        # The schema grammar constrains the whole completion, which would
+                        # collide with thinking tokens, and conversion is mechanical work
+                        # that never needs reasoning -- so this turn always runs instruct.
+                        convert_settings = _sampling_settings(False)
+                        convert_options = {
+                            "seed": seed,
+                            "max_tokens": max_tokens,
+                            **convert_settings,
+                            "think_mode": False,
+                            "reasoning_effort": "low",
+                            "schema": {"type": "object"},
+                        }
+                        result_json, json_usage = server.chat(messages, **convert_options)
+                        try:
+                            json.loads(result_json)
+                        except json.JSONDecodeError as error:
+                            # Only reachable when llama.cpp rejected the schema and the
+                            # request degraded to free-form generation: feed the parse
+                            # error back and repair once, as the last safety net.
+                            LOGGER.warning(
+                                "[Qwen PromptEnhancer] JSON conversion failed validation (%s); repairing once",
+                                error,
+                            )
+                            messages.extend(
+                                [
+                                    {"role": "assistant", "content": result_json},
+                                    {
+                                        "role": "user",
+                                        "content": "That was not valid JSON "
+                                        f"({error}). Return ONE corrected JSON object that "
+                                        "preserves all information from your previous answer. "
+                                        "Reply with only the JSON object, no markdown fences "
+                                        "and no commentary.",
+                                    },
+                                ]
+                            )
+                            result_json, repair_usage = server.chat(messages, **convert_options)
+                            json_usage = {
+                                key: (json_usage.get(key, 0) + repair_usage.get(key, 0))
+                                for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                            }
+                            try:
+                                json.loads(result_json)
+                            except json.JSONDecodeError as final_error:
+                                raise RuntimeError(
+                                    "JSON 输出在自动修复后仍不是合法 JSON："
+                                    f"{final_error}\n模型输出：{result_json[:2000]}"
+                                ) from final_error
                         LOGGER.info(
                             "[Qwen PromptEnhancer] JSON conversion complete | %s",
                             _usage_summary(json_usage),

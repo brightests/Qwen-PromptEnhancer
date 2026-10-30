@@ -150,6 +150,22 @@ def dispatch_tool(name: object, arguments: object, *, skill_root: Path) -> tuple
             payload = args.get("json")
             if isinstance(payload, (dict, list)):
                 json_text = json.dumps(payload, ensure_ascii=False)
+            elif isinstance(payload, str) and payload.strip():
+                # A string payload has no grammar guarantee (tool calls bypass the
+                # JSON-schema response format), so validate it here: bounce invalid
+                # JSON back as a tool error so the model repairs it and finishes
+                # again, instead of shipping a broken payload to the output port.
+                json_text = payload.strip()
+                try:
+                    json.loads(json_text)
+                except json.JSONDecodeError as error:
+                    return (
+                        "ERROR: the 'json' argument is not valid JSON: "
+                        f"{error}. Call finish again with the same answer and a "
+                        "corrected 'json' argument holding exactly one valid JSON object.",
+                        False,
+                        "",
+                    )
             else:
                 json_text = str(payload or "").strip()
             return str(args.get("answer", "")), True, json_text

@@ -54,7 +54,7 @@
       },
       "context_size": {
         "name": "上下文长度",
-        "tooltip": "llama.cpp 上下文窗口（--ctx-size），提示词、多步对话历史与输出共享，默认 32768。调大会增加 KV cache 显存占用；上下文不足时 llama.cpp 会从开头截断最早的内容而不报错。"
+        "tooltip": "llama.cpp 上下文窗口（--ctx-size），提示词、多步对话历史与输出共享，默认 32768。调大会增加 KV cache 显存占用；上下文不足时请求会被 llama.cpp 拒绝（HTTP 400，报错显示在 ComfyUI 控制台），需调大本参数或减少参考图片与视频时长。"
       },
       "video_sample_frames_per_sec": {
         "name": "视频每秒采样帧数",
