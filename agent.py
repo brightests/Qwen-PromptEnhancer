@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import time
@@ -27,6 +28,17 @@ You are running as a multi-step agent and may call the provided local tools:
 
 Read the Skill documents you need, follow the selected Skill's process step by step, then call `finish`
 exactly once with the complete final answer. Tools are local and offline; there is no network access.
+"""
+
+AGENT_ADDENDUM_JSON = """
+
+# JSON output mode
+
+JSON output is enabled: call `finish` with BOTH arguments.
+
+- `answer`: the complete final deliverable, verbatim.
+- `json`: the same deliverable re-expressed as ONE JSON object (meaningful field names,
+  arrays or nested objects where appropriate). The value must be a JSON object, not prose.
 """
 
 TOOL_SCHEMAS = [
@@ -74,6 +86,19 @@ TOOL_SCHEMAS = [
     },
 ]
 
+# Same tool set with an extra structured-output argument on `finish`; used only when
+# the node's json_output switch is on, so the default request shape never changes.
+TOOL_SCHEMAS_JSON = copy.deepcopy(TOOL_SCHEMAS)
+TOOL_SCHEMAS_JSON[-1]["function"]["parameters"]["properties"]["json"] = {
+    "type": "object",
+    "description": "The complete deliverable re-expressed as a single JSON object "
+    "(meaningful field names; arrays or nested objects where appropriate).",
+}
+
+
+def _tool_schemas(json_output: bool) -> list[dict]:
+    return TOOL_SCHEMAS_JSON if json_output else TOOL_SCHEMAS
+
 
 def _safe_skill_file(skill_root: Path, relative: object) -> Path:
     root = skill_root.resolve()
@@ -88,14 +113,14 @@ def _safe_skill_file(skill_root: Path, relative: object) -> Path:
     return candidate
 
 
-def dispatch_tool(name: object, arguments: object, *, skill_root: Path) -> tuple[str, bool]:
-    """Run one local tool. Returns (result text, finished)."""
+def dispatch_tool(name: object, arguments: object, *, skill_root: Path) -> tuple[str, bool, str]:
+    """Run one local tool. Returns (result text, finished, optional JSON payload)."""
     try:
         args = arguments if isinstance(arguments, dict) else json.loads(arguments or "{}")
     except (TypeError, ValueError) as error:
-        return f"ERROR: tool arguments are not valid JSON: {error}", False
+        return f"ERROR: tool arguments are not valid JSON: {error}", False, ""
     if not isinstance(args, dict):
-        return "ERROR: tool arguments must be a JSON object", False
+        return "ERROR: tool arguments must be a JSON object", False, ""
 
     try:
         if name == "list_skill_files":
@@ -108,7 +133,7 @@ def dispatch_tool(name: object, arguments: object, *, skill_root: Path) -> tuple
                     for path in references.rglob("*")
                     if path.is_file() and path.suffix.lower() in {".md", ".txt"}
                 )
-            return "Skill documents:\n" + "\n".join(entries), False
+            return "Skill documents:\n" + "\n".join(entries), False, ""
 
         if name == "read_skill_reference":
             path = _safe_skill_file(skill_root, args.get("file"))
@@ -118,15 +143,21 @@ def dispatch_tool(name: object, arguments: object, *, skill_root: Path) -> tuple
             return (
                 f"# {path.relative_to(skill_root.resolve()).as_posix()}\n\n{text}",
                 False,
+                "",
             )
 
         if name == "finish":
-            return str(args.get("answer", "")), True
+            payload = args.get("json")
+            if isinstance(payload, (dict, list)):
+                json_text = json.dumps(payload, ensure_ascii=False)
+            else:
+                json_text = str(payload or "").strip()
+            return str(args.get("answer", "")), True, json_text
 
-        return f"ERROR: unknown tool: {name}", False
+        return f"ERROR: unknown tool: {name}", False, ""
     except Exception as error:  # noqa: BLE001 - surfaced to the model, never fatal
         LOGGER.warning("[Qwen PromptEnhancer] Tool %s failed: %s", name, error)
-        return f"ERROR: {type(error).__name__}: {error}", False
+        return f"ERROR: {type(error).__name__}: {error}", False, ""
 
 
 def run_agent_loop(
@@ -140,13 +171,15 @@ def run_agent_loop(
     think_mode: bool,
     reasoning_effort: str,
     max_steps: int,
-) -> tuple[str, int, dict[str, int]]:
+    json_output: bool = False,
+) -> tuple[str, str, int, dict[str, int]]:
     """Drive the resident local model through bounded tool-calling steps."""
     deadline = time.perf_counter() + AGENT_DEADLINE_SECONDS
     conversation: list[dict[str, object]] = [dict(message) for message in messages]
+    addendum = AGENT_ADDENDUM + (AGENT_ADDENDUM_JSON if json_output else "")
     conversation[0] = {
         **conversation[0],
-        "content": str(conversation[0]["content"]) + AGENT_ADDENDUM,
+        "content": str(conversation[0]["content"]) + addendum,
     }
 
     steps = 0
@@ -154,6 +187,7 @@ def run_agent_loop(
     completion_tokens = 0
     tokens_used = 0
     final = ""
+    final_json = ""
     while steps < max_steps:
         comfy.model_management.throw_exception_if_processing_interrupted()
         if time.perf_counter() > deadline:
@@ -167,7 +201,7 @@ def run_agent_loop(
             max_tokens=max_tokens,
             think_mode=think_mode,
             reasoning_effort=reasoning_effort,
-            tools=TOOL_SCHEMAS,
+            tools=_tool_schemas(json_output),
             tool_choice="auto",
             **settings,
         )
@@ -196,9 +230,12 @@ def run_agent_loop(
         for call in calls:
             function = (call or {}).get("function") or {}
             name = function.get("name")
-            result, finished = dispatch_tool(name, function.get("arguments"), skill_root=skill_root)
+            result, finished, tool_json = dispatch_tool(
+                name, function.get("arguments"), skill_root=skill_root
+            )
             if name == "finish":
                 final = result
+                final_json = tool_json
             LOGGER.info(
                 "[Qwen PromptEnhancer] step %d/%d | tool=%s | %s",
                 steps,
@@ -218,7 +255,7 @@ def run_agent_loop(
 
     if not final.strip():
         raise RuntimeError(f"The agent produced no final answer within {max_steps} step(s)")
-    return final.strip(), steps, {
+    return final.strip(), final_json.strip(), steps, {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": tokens_used,
