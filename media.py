@@ -79,6 +79,17 @@ def tensor_frame_grid_data_url(
     return f"data:image/jpeg;base64,{encoded}"
 
 
+def flatten_image_batch(images: list) -> list:
+    """Split batched IMAGE tensors into single-image tensors, preserving input order."""
+    flattened = []
+    for image in images:
+        count = int(image.shape[0])
+        if count < 1:
+            raise ValueError("An image input arrived with an empty batch (0 images).")
+        flattened.extend(image[index : index + 1] for index in range(count))
+    return flattened
+
+
 def image_content(image, frame_index: int = 0) -> dict[str, object]:
     return {
         "type": "image_url",

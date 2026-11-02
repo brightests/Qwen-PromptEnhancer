@@ -13,6 +13,7 @@ import folder_paths
 from comfy_api.latest import ComfyExtension, io
 
 from .media import (
+    flatten_image_batch,
     image_content,
     image_grid_content,
     sample_indices_per_second,
@@ -123,15 +124,15 @@ def _autogrow_values(inputs) -> list:
     return [value for _, value in sorted(inputs.items(), key=index) if value is not None]
 
 
-def _validate_reference_images(images: list) -> None:
-    if len(images) > 9:
-        raise ValueError(f"At most 9 reference images are supported; got {len(images)}.")
-    for image_index, image in enumerate(images, 1):
-        image_count = int(image.shape[0])
-        if image_count != 1:
-            raise ValueError(
-                f"Reference image {image_index} must contain exactly one image; got a batch of {image_count}."
-            )
+def _normalize_reference_images(images: list) -> list:
+    """Expand batched IMAGE inputs so every reference image holds exactly one image."""
+    flattened = flatten_image_batch(images)
+    if len(flattened) > 9:
+        raise ValueError(
+            f"At most 9 reference images are supported; got {len(flattened)} "
+            "after expanding batched inputs. Connect fewer images or split the batch."
+        )
+    return flattened
 
 
 def _reference_video_details(
@@ -389,7 +390,8 @@ class QwenPromptEnhancer(io.ComfyNode):
                     template=io.Autogrow.TemplatePrefix(
                         input=io.Image.Input(
                             "reference_image",
-                            tooltip="一张参考图。需要时请在 prompt 中说明它的角色与用途。",
+                            tooltip="一张参考图；接入批次时会按顺序展开为多张（与其它输入合计最多 9 张）。"
+                            "需要时请在 prompt 中说明它的角色与用途。",
                         ),
                         prefix="reference_image_",
                         min=0,
@@ -454,9 +456,8 @@ class QwenPromptEnhancer(io.ComfyNode):
 
             stage_started = time.perf_counter()
             LOGGER.info("[Qwen PromptEnhancer] Preparing multimodal input")
-            images = _autogrow_values(reference_images)
+            images = _normalize_reference_images(_autogrow_values(reference_images))
             videos = _autogrow_values(reference_videos)
-            _validate_reference_images(images)
             video_details = _reference_video_details(
                 videos,
                 video_sample_frames_per_sec,
