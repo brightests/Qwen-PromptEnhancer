@@ -591,6 +591,10 @@ class QwenPromptEnhancer(io.ComfyNode):
                         _usage_summary(routing_usage),
                         time.perf_counter() - stage_started,
                     )
+                elif selected == NO_SKILL:
+                    # "none" is a valid manual choice: skip Skill resolution and fall
+                    # through to the direct-chat branch below.
+                    pass
                 else:
                     selected = resolve_skill(selected, registry).id
                     LOGGER.info(
