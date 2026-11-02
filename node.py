@@ -127,6 +127,13 @@ def _autogrow_values(inputs) -> list:
 def _normalize_reference_images(images: list) -> list:
     """Expand batched IMAGE inputs so every reference image holds exactly one image."""
     flattened = flatten_image_batch(images)
+    if len(flattened) != len(images):
+        LOGGER.info(
+            "[Qwen PromptEnhancer] Reference images expanded from batched inputs"
+            " | inputs=%d | images=%d",
+            len(images),
+            len(flattened),
+        )
     if len(flattened) > 9:
         raise ValueError(
             f"At most 9 reference images are supported; got {len(flattened)} "
