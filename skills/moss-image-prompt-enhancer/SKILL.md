@@ -10,19 +10,24 @@ agents with filesystem and shell tools. The agent makes creative decisions;
 the bundled Python tool handles coordinate arithmetic and serialization.
 No Echidna service, model API or third-party Python dependency is needed.
 
-## Running inside a ComfyUI node (no filesystem or shell)
+## Running inside a ComfyUI node (sandboxed agent)
 
-This skill also runs inside a sandboxed local agent whose only tools are
-`list_skill_files`, `read_skill_reference` and `finish`. It cannot write files,
-cannot run scripts and has no shell. In that environment:
+This skill also runs inside a sandboxed local agent whose tools are
+`list_skill_files`, `read_skill_reference`, `run_skill_script` and `finish`.
+It cannot write arbitrary files and has no shell, but it CAN run the bundled
+compiler through `run_skill_script`. In that environment:
 
-- Never save drafts to disk and never emit a `compilation_command` field:
-  there is no shell to run it, and `/path/to/...` placeholders are never valid
-  output.
-- If the host exposes a compile tool, pass the complete draft JSON to it and
-  return the compiled text through `finish`.
-- Without a compile tool, deliver the **uncompiled draft** through `finish` and
-  say in the answer that it still needs `scripts/compile_prompt.py` before use.
+- Never save drafts to disk yourself and never emit a `compilation_command`
+  field: `/path/to/...` placeholders are never valid output.
+- For a **Layout** deliverable you MUST compile the draft before finishing:
+  call `run_skill_script` with `script: "compile_prompt.py"`,
+  `input_json: <the complete draft object>`, `args: ["--output", "prompt.txt"]`
+  and `output_files: ["prompt.txt"]`, then call `finish` with the compiled
+  result (the contents of `prompt.txt`) as the answer and JSON payload.
+- If `run_skill_script` returns an error (for example a draft validation
+  failure), fix the draft according to the error message and retry the call.
+- A **caption** deliverable does not need compilation: call `finish` directly
+  with the caption JSON.
 - The draft must match the compiler schema exactly. Root fields are only
   `width`, `height`, `bbox_coord_space`, `bbox_format`, `summary`, `items` —
   the compiler rejects unknown fields. Do not wrap the draft in another object

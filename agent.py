@@ -5,6 +5,10 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
+import subprocess
+import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -15,6 +19,8 @@ LOGGER = logging.getLogger("ComfyUI.QwenPromptEnhancer.tools")
 AGENT_DEADLINE_SECONDS = 3600.0
 AGENT_TOKEN_BUDGET = 65536
 MAX_TOOL_FILE_BYTES = 200_000
+SCRIPT_TIMEOUT_SECONDS = 60.0
+MAX_SCRIPT_OUTPUT_BYTES = 100_000
 
 AGENT_ADDENDUM = """
 
@@ -24,6 +30,8 @@ You are running as a multi-step agent and may call the provided local tools:
 
 - `list_skill_files`: enumerate the documents bundled with the selected Skill.
 - `read_skill_reference`: read one bundled Skill document by its relative path.
+- `run_skill_script`: run one Python script bundled with the selected Skill
+  (only files under the Skill's `scripts/` directory; offline, sandboxed).
 - `finish`: return the complete final deliverable and end the run.
 
 Read the Skill documents you need, follow the selected Skill's process step by step, then call `finish`
@@ -64,6 +72,48 @@ TOOL_SCHEMAS = [
                     }
                 },
                 "required": ["file"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_skill_script",
+            "description": "Run one Python script bundled with the selected Skill (must live under the "
+            "Skill's scripts/ directory). The script runs offline in a temporary working directory. "
+            "For example, moss-image-prompt-enhancer exposes scripts/compile_prompt.py, which compiles "
+            "a Layout draft (or a plain caption) into the final MOSS prompt. Pass your complete draft "
+            "via input_json, then call finish with the compiled result.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "script": {
+                        "type": "string",
+                        "description": "Script path relative to the Skill's scripts/ directory, e.g. compile_prompt.py",
+                    },
+                    "input_json": {
+                        "type": "object",
+                        "description": "A JSON payload written to input.json and passed to the script as its "
+                        "first positional argument. Provide exactly one of input_json / input_text.",
+                    },
+                    "input_text": {
+                        "type": "string",
+                        "description": "A plain-text payload written to input.txt and passed to the script as its "
+                        "first positional argument. Provide exactly one of input_json / input_text.",
+                    },
+                    "args": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Extra command-line arguments, e.g. [\"--output\", \"prompt.txt\"]",
+                    },
+                    "output_files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Files written by the script into its working directory to read back, "
+                        "e.g. [\"prompt.txt\"]",
+                    },
+                },
+                "required": ["script"],
             },
         },
     },
@@ -113,6 +163,88 @@ def _safe_skill_file(skill_root: Path, relative: object) -> Path:
     return candidate
 
 
+def _truncate(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n...[truncated]"
+
+
+def _run_skill_script(skill_root: Path, args: dict[str, object]) -> str:
+    """Execute a whitelisted Skill script offline in a throwaway directory."""
+    script_raw = str(args.get("script") or "").strip().lstrip("/\\")
+    if not script_raw:
+        raise ValueError("script must not be empty")
+
+    scripts_dir = skill_root.resolve() / "scripts"
+    if not scripts_dir.is_dir():
+        raise FileNotFoundError("this Skill has no scripts/ directory")
+    script_path = (scripts_dir / script_raw).resolve()
+    if script_path != scripts_dir and scripts_dir not in script_path.parents:
+        raise ValueError("script must stay inside the Skill's scripts/ directory")
+    if script_path.suffix.lower() != ".py":
+        raise ValueError("only .py scripts can be run")
+    if not script_path.is_file():
+        raise FileNotFoundError(f"script not found: {script_raw}")
+
+    has_json = "input_json" in args and args.get("input_json") is not None
+    has_text = isinstance(args.get("input_text"), str) and bool(args["input_text"])
+    if has_json == has_text:
+        raise ValueError("provide exactly one of input_json / input_text")
+
+    extra_args = args.get("args") or []
+    if not isinstance(extra_args, list) or not all(isinstance(a, str) for a in extra_args):
+        raise ValueError("args must be a list of strings")
+
+    output_files = args.get("output_files") or []
+    if not isinstance(output_files, list) or not all(isinstance(f, str) and f.strip() for f in output_files):
+        raise ValueError("output_files must be a list of file names")
+
+    with tempfile.TemporaryDirectory(prefix="qwen_skill_") as tmp:
+        work_dir = Path(tmp)
+        argv = [sys.executable, str(script_path)]
+        if has_json:
+            payload_path = work_dir / "input.json"
+            payload_path.write_text(
+                json.dumps(args["input_json"], ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            argv.append(str(payload_path))
+        else:
+            payload_path = work_dir / "input.txt"
+            payload_path.write_text(str(args["input_text"]), encoding="utf-8")
+            argv.append(str(payload_path))
+        argv.extend(extra_args)
+
+        try:
+            proc = subprocess.run(  # noqa: S603 - fixed argv, no shell, whitelisted path
+                argv,
+                cwd=work_dir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=SCRIPT_TIMEOUT_SECONDS,
+                env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            )
+        except subprocess.TimeoutExpired:
+            raise ValueError(f"script timed out after {SCRIPT_TIMEOUT_SECONDS:.0f}s") from None
+
+        sections = [f"exit_code: {proc.returncode}", f"stdout:\n{_truncate(proc.stdout or '', MAX_SCRIPT_OUTPUT_BYTES)}"]
+        if (proc.stderr or "").strip():
+            sections.append(f"stderr:\n{_truncate(proc.stderr, MAX_SCRIPT_OUTPUT_BYTES)}")
+        for name in output_files:
+            out_path = (work_dir / name.strip().lstrip("/\\")).resolve()
+            if out_path != work_dir and work_dir not in out_path.parents:
+                sections.append(f"--- {name}: ERROR (path escapes the script working directory)")
+                continue
+            if out_path.is_file():
+                sections.append(
+                    f"--- {name} ---\n{_truncate(out_path.read_text(encoding='utf-8', errors='replace'), MAX_TOOL_FILE_BYTES)}"
+                )
+            else:
+                sections.append(f"--- {name}: not found (script may not have written it)")
+        return "\n".join(sections)
+
+
 def dispatch_tool(name: object, arguments: object, *, skill_root: Path) -> tuple[str, bool, str]:
     """Run one local tool. Returns (result text, finished, optional JSON payload)."""
     try:
@@ -145,6 +277,9 @@ def dispatch_tool(name: object, arguments: object, *, skill_root: Path) -> tuple
                 False,
                 "",
             )
+
+        if name == "run_skill_script":
+            return _run_skill_script(skill_root, args), False, ""
 
         if name == "finish":
             payload = args.get("json")
