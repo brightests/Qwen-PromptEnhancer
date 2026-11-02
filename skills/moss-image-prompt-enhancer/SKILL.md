@@ -10,6 +10,27 @@ agents with filesystem and shell tools. The agent makes creative decisions;
 the bundled Python tool handles coordinate arithmetic and serialization.
 No Echidna service, model API or third-party Python dependency is needed.
 
+## Running inside a ComfyUI node (no filesystem or shell)
+
+This skill also runs inside a sandboxed local agent whose only tools are
+`list_skill_files`, `read_skill_reference` and `finish`. It cannot write files,
+cannot run scripts and has no shell. In that environment:
+
+- Never save drafts to disk and never emit a `compilation_command` field:
+  there is no shell to run it, and `/path/to/...` placeholders are never valid
+  output.
+- If the host exposes a compile tool, pass the complete draft JSON to it and
+  return the compiled text through `finish`.
+- Without a compile tool, deliver the **uncompiled draft** through `finish` and
+  say in the answer that it still needs `scripts/compile_prompt.py` before use.
+- The draft must match the compiler schema exactly. Root fields are only
+  `width`, `height`, `bbox_coord_space`, `bbox_format`, `summary`, `items` —
+  the compiler rejects unknown fields. Do not wrap the draft in another object
+  (no `layout_draft` / `canvas_dimensions` nesting) and do not add root keys
+  such as `color_palette`, `lighting_direction` or `reading_order`; fold
+  palette hints into `summary.palette` or item `palette` and express reading
+  order through item order plus `summary.caption`.
+
 ## Choose the deliverable
 
 Honor an explicit request for a caption or Layout. Otherwise use a caption for
